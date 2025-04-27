@@ -106,28 +106,56 @@ inline void setupShadowEAA(Vitrae::ComponentRoot &root)
             .snippet = R"glsl(
                 float offset = 0.5 / ShadowMapSize.x;
 
-                vec2 rounded_texelpos4shadow = round(texelpos4shadow);
-                ivec2 texelpos4shadowI = ivec2(rounded_texelpos4shadow);
+                vec2 floor_texelpos4shadow = floor(texelpos4shadow);
+                vec2 inter_offset = texelpos4shadow - floor_texelpos4shadow;
+                ivec2 floor_texelpos4shadowI = ivec2(floor_texelpos4shadow);
 
-                vec3 shadow_alias_data = texelFetch(tex_eaa_alias, texelpos4shadowI, 0).rgb;
-                vec2 shadow_normal4view2D = shadow_alias_data.xy;
-                float shadow_alias_shift = shadow_alias_data.z;
+                vec2 inter_normal = vec2(0.0, 0.0);
+                float inter_shadow_alias_shift = 0.0;
+                float inter_subtexel_shift = 0.0;
+                float inter_weight = 0.0;
 
-                vec2 subtexel_offset = texelpos4shadow - rounded_texelpos4shadow;
-                float subtexel_shift = dot(shadow_normal4view2D, subtexel_offset);
+                for (int xoff = 0; xoff <= 1; xoff++) {
+                    for (int yoff = 0; yoff <= 1; yoff++) {
+                        ivec2 off = ivec2(xoff, yoff);
+                        ivec2 texelpos4shadowI = floor_texelpos4shadowI + off;
 
-                vec2 adjusted_texelpos4shadow = texelpos4shadow;
-                if (shadow_alias_shift != 0.0) {
-                    if (subtexel_shift < shadow_alias_shift) {
-                        adjusted_texelpos4shadow -= shadow_normal4view2D*0.25;
-                    } else {
-                        adjusted_texelpos4shadow += shadow_normal4view2D;
+                        if (texelFetch(tex_eaa_shadow, texelpos4shadowI, 0).r < position_shadow.z - offset) {
+                            vec3 shadow_alias_data = texelFetch(tex_eaa_alias, texelpos4shadowI, 0).rgb;
+                            float shadow_alias_shift = shadow_alias_data.z;
+
+                            if (shadow_alias_shift != 0) {
+                                vec2 shadow_normal4view2D = shadow_alias_data.xy;
+
+                                vec2 subtexel_offset = texelpos4shadow - vec2(texelpos4shadowI);
+                                float subtexel_shift = dot(shadow_normal4view2D, subtexel_offset);
+
+                                float weight = abs(float(1 - xoff) - inter_offset.x) * abs(float(1 - yoff) - inter_offset.y);
+                                inter_normal += weight * shadow_normal4view2D;
+                                inter_shadow_alias_shift += weight * shadow_alias_shift;
+                                inter_subtexel_shift += weight * subtexel_shift;
+                                inter_weight += weight;
+                            }
+                        }
                     }
                 }
-                ivec2 final_texelpos4shadowI = ivec2(round(adjusted_texelpos4shadow));
 
-                bool inShadow =
-                    (texelFetch(tex_eaa_shadow, final_texelpos4shadowI, 0).r < position_shadow.z + offset);
+                vec2 adjusted_texelpos4shadow = texelpos4shadow;
+                bool inShadow;
+                if (inter_weight > 0.0) {
+                    if (inter_subtexel_shift < inter_shadow_alias_shift) {
+                        //adjusted_texelpos4shadow -= normalize(inter_normal)*0.7;
+                        inShadow = true;
+                    } else {
+                        adjusted_texelpos4shadow += normalize(inter_normal);
+                        ivec2 final_texelpos4shadowI = ivec2(round(adjusted_texelpos4shadow));
+                        inShadow = (texelFetch(tex_eaa_shadow, final_texelpos4shadowI, 0).r < position_shadow.z - offset);
+                    }
+                } else {
+                    ivec2 final_texelpos4shadowI = ivec2(round(adjusted_texelpos4shadow));
+                    inShadow = (texelFetch(tex_eaa_shadow, final_texelpos4shadowI, 0).r < position_shadow.z - offset);
+                }
+
                 light_shadow_factor_EAA = inShadow? 0.0 : 1.0;
             )glsl",
         }),
