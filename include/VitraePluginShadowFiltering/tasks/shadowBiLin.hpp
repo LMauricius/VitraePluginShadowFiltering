@@ -37,7 +37,7 @@ namespace VitraePluginShadowFiltering
 
                     bvec4 inShadow = lessThan(
                         textureGather(tex_shadow, position_shadow.xy - offset, 0),
-                        vec4(position_shadow.z + offset)
+                        vec4(position_shadow.z - offset)
                     );
 
                     light_shadow_factor_bilin = (
