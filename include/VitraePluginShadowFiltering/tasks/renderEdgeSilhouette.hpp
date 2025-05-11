@@ -6,6 +6,7 @@
 #include "Vitrae/Params/Purposes.hpp"
 #include "Vitrae/Pipelines/Compositing/ClearRender.hpp"
 #include "Vitrae/Pipelines/Compositing/SceneRender.hpp"
+#include "Vitrae/Pipelines/Shading/Snippet.hpp"
 
 #include "dynasma/standalone.hpp"
 
@@ -19,32 +20,44 @@ inline void setupRenderEdgeSilhouette(ComponentRoot &root)
 {
     MethodCollection &methodCollection = root.getComponent<MethodCollection>();
 
+    methodCollection.registerShaderTask(
+        root.getComponent<ShaderSnippetKeeper>().new_asset_k<ShaderSnippet::StringParams>({
+            .inputSpecs = {{"position_view", TYPE_INFO<glm::vec4>},
+                           {"viewport_size", TYPE_INFO<glm::uvec2>},
+                           {"denormal4view", TYPE_INFO<glm::vec3>}},
+            .outputSpecs = {{"position_halfnormal_offset4view", TYPE_INFO<glm::vec4>}},
+            .snippet = R"glsl(
+                vec3 normvertex4view = normalize(denormal4view.xyz);
+                position_halfnormal_offset4view = vec4(
+                    position_view.xy + normvertex4view.xy / vec2(viewport_size) * position_view.w * 0.5,
+                    position_view.z + normvertex4view.z * position_view.w * 0.5,
+                    position_view.w
+                );
+            )glsl",
+        }),
+        ShaderStageFlag::Vertex);
+
     methodCollection.registerComposeTask(
         root.getComponent<ComposeSceneRenderKeeper>().new_asset_k<ComposeSceneRender::SetupParams>({
             .root = root,
-            .inputTokenNames = {"frame_cleared"},
+            .inputTokenNames = {"scene_silhouette_rendered"},
             .outputTokenNames = {"scene_edge_silhouette_rendered"},
 
             .rasterizing =
                 {
-                    .vertexPositionOutputPropertyName = "position_view",
+                    .vertexPositionOutputPropertyName = "position_halfnormal_offset4view",
                     .modelFormPurpose = Purposes::silhouetting,
                     .cullingMode = CullingMode::Frontface,
-                    .rasterizingMode = RasterizingMode::DerivationalFillEdges,
+                    .rasterizingMode = RasterizingMode::DerivationalTraceEdges,
                 },
             .ordering =
                 {
                     .generateFilterAndSort = [](const Scene &scene, const RenderComposeContext &ctx)
                         -> std::pair<ComposeSceneRender::FilterFunc, ComposeSceneRender::SortFunc> {
-                        glm::vec3 camPos = scene.camera.position;
-
                         return {
                             [](const ModelProp &prop) { return true; },
-                            [camPos](const ModelProp &l, const ModelProp &r) {
-                                // closest first
-                                glm::vec3 lpos = l.transform.position;
-                                glm::vec3 rpos = r.transform.position;
-                                return glm::length2(camPos - rpos) < glm::length2(camPos - lpos);
+                            [](const ModelProp &l, const ModelProp &r) {
+                                return &l < &r;
                             },
                         };
                     },
