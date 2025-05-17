@@ -22,15 +22,19 @@ inline void setupRenderEdgeSilhouette(ComponentRoot &root)
 
     methodCollection.registerShaderTask(
         root.getComponent<ShaderSnippetKeeper>().new_asset_k<ShaderSnippet::StringParams>({
-            .inputSpecs = {{"position_view", TYPE_INFO<glm::vec4>},
-                           {"viewport_size", TYPE_INFO<glm::uvec2>},
-                           {"denormal4view", TYPE_INFO<glm::vec3>}},
+            .inputSpecs =
+                {
+                    {"position_view", TYPE_INFO<glm::vec4>},
+                    {"viewport_size", TYPE_INFO<glm::uvec2>},
+                    {"denormal4view", TYPE_INFO<glm::vec3>},
+                    {"eaa_edge_scale", TYPE_INFO<float>, 0.5f},
+                },
             .outputSpecs = {{"position_halfnormal_offset4view", TYPE_INFO<glm::vec4>}},
             .snippet = R"glsl(
                 vec3 normvertex4view = normalize(denormal4view.xyz);
                 position_halfnormal_offset4view = vec4(
-                    position_view.xy + normvertex4view.xy / vec2(viewport_size) * position_view.w * 0.5,
-                    position_view.z + normvertex4view.z * position_view.w * 0.5,
+                    position_view.xy + normalize(normvertex4view.xy) / vec2(viewport_size) * position_view.w*eaa_edge_scale,
+                    position_view.z + normvertex4view.z * position_view.w * 0.005,
                     position_view.w
                 );
             )glsl",
@@ -56,9 +60,7 @@ inline void setupRenderEdgeSilhouette(ComponentRoot &root)
                         -> std::pair<ComposeSceneRender::FilterFunc, ComposeSceneRender::SortFunc> {
                         return {
                             [](const ModelProp &prop) { return true; },
-                            [](const ModelProp &l, const ModelProp &r) {
-                                return &l < &r;
-                            },
+                            [](const ModelProp &l, const ModelProp &r) { return &l < &r; },
                         };
                     },
                 },
