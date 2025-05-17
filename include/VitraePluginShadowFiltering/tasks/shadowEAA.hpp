@@ -19,25 +19,62 @@ inline void setupShadowEAA(Vitrae::ComponentRoot &root)
     MethodCollection &methodCollection = root.getComponent<MethodCollection>();
 
     // Composition
-    methodCollection.registerComposeTask(
-        dynasma::makeStandalone<ComposeFrameToTexture>(ComposeFrameToTexture::SetupParams{
-            .root = root,
-            .inputTokenNames = {"scene_edge_silhouette_rendered"},
-            .outputColorTextureName = "",
-            .outputDepthTextureName = "tex_eaa_shadow_adapted",
-            .outputs = {{
-                .textureName = "tex_eaa_alias_adapted",
-                .fragmentSpec = {"alias_data", TYPE_INFO<glm::vec3>},
-            }},
-            .size{String("ShadowMapSize"), {1024, 1024}},
-            .channelType = Texture::ChannelType::VEC3_SNORM8,
-            .horWrap = Texture::WrappingType::BORDER_COLOR,
-            .verWrap = Texture::WrappingType::BORDER_COLOR,
-            .minFilter = Texture::FilterType::NEAREST,
-            .magFilter = Texture::FilterType::NEAREST,
-            .useMipMaps = false,
-            .borderColor = {0.0f, 0.0f, 0.0f, 0.0f},
-        }));
+    methodCollection
+        .registerComposeTask(
+            dynasma::makeStandalone<ComposeFrameToTexture>(
+                ComposeFrameToTexture::SetupParams{
+                    .root = root,
+                    .inputTokenNames = {"scene_edge_silhouette_rendered"},
+                    .outputs =
+                        {
+                            ComposeFrameToTexture::OutputTextureParamSpec{
+                                .textureName = "tex_eaa_shadow_adapted",
+                                .shaderComponent = FixedRenderComponent::Depth,
+                                .format = BufferFormat::DEPTH_STANDARD,
+                                .clearColor = glm::vec4{1.0f, 1.0f, 1.0f, 1.0f},
+                                .filtering =
+                                    {
+                                        .horWrap = WrappingType::BORDER_COLOR,
+                                        .verWrap = WrappingType::BORDER_COLOR,
+                                        .minFilter = FilterType::NEAREST,
+                                        .magFilter = FilterType::NEAREST,
+                                        .useMipMaps = false,
+                                        .borderColor = {1.0f, 1.0f, 1.0f, 1.0f},
+                                    },
+                            },
+                            ComposeFrameToTexture::OutputTextureParamSpec{
+                                .textureName = "tex_eaa_ext_shadow_adapted",
+                                .shaderComponent = ParamSpec{"extended_depth", TYPE_INFO<float>},
+                                .format = BufferFormat::SCALAR_FLOAT32,
+                                .clearColor = glm::vec4{1.0f, 1.0f, 1.0f, 1.0f},
+                                .filtering =
+                                    {
+                                        .horWrap = WrappingType::BORDER_COLOR,
+                                        .verWrap = WrappingType::BORDER_COLOR,
+                                        .minFilter = FilterType::NEAREST,
+                                        .magFilter = FilterType::NEAREST,
+                                        .useMipMaps = false,
+                                        .borderColor = {1.0f, 1.0f, 1.0f, 1.0f},
+                                    },
+                            },
+                            ComposeFrameToTexture::OutputTextureParamSpec{
+                                .textureName = "tex_eaa_alias_adapted",
+                                .shaderComponent = ParamSpec{"alias_data", TYPE_INFO<glm::vec3>},
+                                .format = BufferFormat::VEC3_SNORM8,
+                                .clearColor = glm::vec4{0.0f, 0.0f, 0.0f, 0.0f},
+                                .filtering =
+                                    {
+                                        .horWrap = WrappingType::BORDER_COLOR,
+                                        .verWrap = WrappingType::BORDER_COLOR,
+                                        .minFilter = FilterType::NEAREST,
+                                        .magFilter = FilterType::NEAREST,
+                                        .useMipMaps = false,
+                                        .borderColor = {0.0f, 0.0f, 0.0f, 0.0f},
+                                    },
+                            },
+                        },
+                    .size{String("ShadowMapSize"), {1024, 1024}},
+                }));
 
     methodCollection.registerComposeTask(
         dynasma::makeStandalone<ComposeAdaptTasks>(ComposeAdaptTasks::SetupParams{
@@ -51,6 +88,7 @@ inline void setupShadowEAA(Vitrae::ComponentRoot &root)
                     {"mat_proj", "mat_shadow_proj"},
                     {"tex_eaa_shadow", "tex_eaa_shadow_adapted"},
                     {"tex_eaa_alias", "tex_eaa_alias_adapted"},
+                    {"tex_eaa_ext_shadow", "tex_eaa_ext_shadow_adapted"},
                 },
             .desiredOutputs =
                 {
@@ -80,14 +118,20 @@ inline void setupShadowEAA(Vitrae::ComponentRoot &root)
             .inputSpecs =
                 {
                     {"normal4view", TYPE_INFO<glm::vec3>},
+                    {"position_shadow", TYPE_INFO<glm::vec3>},
                     {"texelpos4shadow", TYPE_INFO<glm::vec2>},
                 },
-            .outputSpecs = {{"alias_data", TYPE_INFO<glm::vec3>}},
+            .outputSpecs =
+                {
+                    {"alias_data", TYPE_INFO<glm::vec3>},
+                    {"extended_depth", TYPE_INFO<float>},
+                },
             .snippet = R"glsl(
                 vec2 normal4view2D = normalize(normal4view.xy);
                 vec2 alias = interpolateAtCentroid(texelpos4shadow) - gl_FragCoord.xy;
                 float alias_shift = dot(normal4view2D, alias);
                 alias_data = vec3(normal4view2D, alias_shift/2);
+                extended_depth = position_shadow.z;
             )glsl",
         }),
         ShaderStageFlag::Fragment | ShaderStageFlag::Compute);
@@ -169,10 +213,12 @@ inline void setupShadowEAA(Vitrae::ComponentRoot &root)
             .inputSpecs =
                 {
                     {"tex_eaa_shadow", TYPE_INFO<dynasma::FirmPtr<Texture>>},
+                    {"tex_eaa_ext_shadow", TYPE_INFO<dynasma::FirmPtr<Texture>>},
                     {"tex_eaa_alias", TYPE_INFO<dynasma::FirmPtr<Texture>>},
                     {"position_shadow", TYPE_INFO<glm::vec3>},
                     {"texelpos4shadow", TYPE_INFO<glm::vec2>},
                     {"ShadowMapSize", TYPE_INFO<glm::uvec2>},
+                    {"eaa_fade_length", TYPE_INFO<float>, 1.0f},
                 },
             .outputSpecs =
                 {
@@ -195,7 +241,7 @@ inline void setupShadowEAA(Vitrae::ComponentRoot &root)
                         ivec2 off = ivec2(xoff, yoff);
                         ivec2 texelpos4shadowI = floor_texelpos4shadowI + off;
 
-                        if (texelFetch(tex_eaa_shadow, texelpos4shadowI, 0).r < position_shadow.z - offset) {
+                        if (texelFetch(tex_eaa_ext_shadow, texelpos4shadowI, 0).r < position_shadow.z - offset) {
                             vec3 shadow_alias_data = texelFetch(tex_eaa_alias, texelpos4shadowI, 0).rgb;
                             float shadow_alias_shift = shadow_alias_data.z*2;
                             
@@ -220,15 +266,15 @@ inline void setupShadowEAA(Vitrae::ComponentRoot &root)
                 if (inter_weight > 0.0) {
                     adjusted_texelpos4shadow += normalize(inter_normal)*1.5;
                     ivec2 final_texelpos4shadowI = ivec2(round(adjusted_texelpos4shadow));
-                    bool inShadow = (texelFetch(tex_eaa_shadow, final_texelpos4shadowI, 0).r < position_shadow.z - offset);
+                    bool inShadow = (texelFetch(tex_eaa_ext_shadow, final_texelpos4shadowI, 0).r < position_shadow.z - offset);
                     
                     light_shadow_factor_EAA_LF = inShadow? 0.0 : clamp(
-                        ((inter_subtexel_shift - inter_shadow_alias_shift ) / inter_weight + 0.5),
+                        ((inter_subtexel_shift - inter_shadow_alias_shift ) / eaa_fade_length / inter_weight + 0.5),
                         0.0, 1.0
                     );
                 } else {
                     ivec2 final_texelpos4shadowI = ivec2(round(adjusted_texelpos4shadow));
-                    bool inShadow = (texelFetch(tex_eaa_shadow, final_texelpos4shadowI, 0).r < position_shadow.z - offset);
+                    bool inShadow = (texelFetch(tex_eaa_ext_shadow, final_texelpos4shadowI, 0).r < position_shadow.z - offset);
                     light_shadow_factor_EAA_LF = inShadow? 0.0 : 1.0;
                 }
             )glsl",
