@@ -277,7 +277,9 @@ inline void setupShadowEAA(Vitrae::ComponentRoot &root)
                 float inter_weight = 0.0;
 
                 bool onEdge = false;
-
+                bool hasInShadow = false;
+                bool hasNotInShadow = false;
+                
                 for (int xoff = 0; xoff <= 1; xoff++) {
                     for (int yoff = 0; yoff <= 1; yoff++) {
                         ivec2 off = ivec2(xoff, yoff);
@@ -298,7 +300,7 @@ inline void setupShadowEAA(Vitrae::ComponentRoot &root)
 
                                 float weight = pow(
                                     abs(float(1 - xoff) - inter_offset.x) * abs(float(1 - yoff) - inter_offset.y),
-                                    2.0
+                                    0.5
                                 );
                                 inter_normal += weight * shadow_normal4view2D;
                                 inter_shadow_alias_shift += weight * shadow_alias_shift;
@@ -309,8 +311,17 @@ inline void setupShadowEAA(Vitrae::ComponentRoot &root)
                             if (sample_core >= position_shadow.z - offset) {
                                 onEdge = true;
                             }
+                            hasInShadow = true;
+                        } else if (sample_core < position_shadow.z - offset) {
+                            hasInShadow = true;
+                        } else {
+                            hasNotInShadow = true;
                         }
                     }
+                }
+
+                if (hasInShadow && hasNotInShadow) {
+                    onEdge = true;
                 }
 
                 vec2 adjusted_texelpos4shadow = texelpos4shadow;
